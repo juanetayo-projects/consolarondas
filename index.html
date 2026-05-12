@@ -447,6 +447,10 @@ table.records tbody tr:hover{background:#F8FBFF}
         <select class="gf-mes"><option value="">Todos</option></select>
       </div>
       <div class="fl">
+        <label>Grupo / Principio</label>
+        <select class="gf-principio"><option value="">Todos los principios</option></select>
+      </div>
+      <div class="fl">
         <label>&nbsp;</label>
         <button class="gf-clear">
           <svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -523,6 +527,7 @@ table.records tbody tr:hover{background:#F8FBFF}
       <div class="fl"><label>Mes</label><select class="gf-mes"><option value="">Todos</option></select></div>
       <div class="fl"><label>Desde</label><input type="date" class="gf-desde"></div>
       <div class="fl"><label>Hasta</label><input type="date" class="gf-hasta"></div>
+      <div class="fl"><label>Grupo / Principio</label><select class="gf-principio"><option value="">Todos los principios</option></select></div>
       <div class="fl"><label>&nbsp;</label><button class="gf-clear"><svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Limpiar</button></div>
       <div class="fl"><label>&nbsp;</label><div class="gf-info"><svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg><span class="gf-count">0 registros</span></div></div>
     </div>
@@ -644,7 +649,22 @@ let editMode = false;
 let editBuffer = null;
 let charts = {};
 
-const gState = { srv:'', anio:'', mes:'', desde:'', hasta:'' };
+const gState = { srv:'', anio:'', mes:'', desde:'', hasta:'', principio:'' };
+
+// Devuelve {si, no, na} considerando filtro de principio global
+function getTotalsForRecord(r){
+  if (!gState.principio) return {si: r.totalSi, no: r.totalNo, na: r.totalNa};
+  const p = PRINCIPIOS.find(x => x.id === parseInt(gState.principio));
+  if (!p) return {si: r.totalSi, no: r.totalNo, na: r.totalNa};
+  let si=0, no=0, na=0;
+  for (let q = p.range[0]; q <= p.range[1]; q++){
+    const resp = (r.respuestas[q-1]||{}).respuesta;
+    if (resp==='SI') si++;
+    else if (resp==='NO') no++;
+    else if (resp==='N/A') na++;
+  }
+  return {si, no, na};
+}
 const rState = { search:'', srv:'', anio:'', mes:'', desde:'', hasta:'', cmp:'' };
 
 // ════════════════════════════════════════════════════
@@ -786,6 +806,11 @@ function initFilters(){
     sel.innerHTML = '<option value="">Todos</option>' + MESES.map((m,i)=>`<option value="${String(i+1).padStart(2,'0')}">${m}</option>`).join('');
     sel.value = cur;
   });
+  $$('.gf-principio').forEach(sel => {
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">Todos los principios</option>' + PRINCIPIOS.map(p=>`<option value="${p.id}">${p.id}. ${p.n}</option>`).join('');
+    sel.value = cur;
+  });
 }
 
 function matchesG(r, st){
@@ -806,17 +831,22 @@ function applyGlobal(){
 // ════════════════════════════════════════════════════
 function bindGlobalFilter(containerId, state, onChange){
   const cont = $(containerId);
-  cont.querySelector('.gf-srv').addEventListener('change', e => { state.srv = e.target.value; onChange(); });
-  cont.querySelector('.gf-anio').addEventListener('change', e => { state.anio = e.target.value; onChange(); });
-  cont.querySelector('.gf-mes').addEventListener('change', e => { state.mes = e.target.value; onChange(); });
+  cont.querySelector('.gf-srv').addEventListener('change', e => { state.srv = e.target.value; syncSelects('gf-srv', e.target.value); onChange(); });
+  cont.querySelector('.gf-anio').addEventListener('change', e => { state.anio = e.target.value; syncSelects('gf-anio', e.target.value); onChange(); });
+  cont.querySelector('.gf-mes').addEventListener('change', e => { state.mes = e.target.value; syncSelects('gf-mes', e.target.value); onChange(); });
+  const pr = cont.querySelector('.gf-principio'); if (pr) pr.addEventListener('change', e => { state.principio = e.target.value; syncSelects('gf-principio', e.target.value); onChange(); });
   const d = cont.querySelector('.gf-desde'); if (d) d.addEventListener('change', e => { state.desde = e.target.value; onChange(); });
   const h = cont.querySelector('.gf-hasta'); if (h) h.addEventListener('change', e => { state.hasta = e.target.value; onChange(); });
   cont.querySelector('.gf-clear').addEventListener('click', () => {
-    state.srv=''; state.anio=''; state.mes=''; state.desde=''; state.hasta='';
-    cont.querySelectorAll('select').forEach(s=>s.value='');
-    cont.querySelectorAll('input').forEach(i=>i.value='');
+    state.srv=''; state.anio=''; state.mes=''; state.desde=''; state.hasta=''; state.principio='';
+    document.querySelectorAll('#gfDash select, #gfStats select').forEach(s=>s.value='');
+    document.querySelectorAll('#gfDash input, #gfStats input').forEach(i=>i.value='');
     onChange();
   });
+}
+// Sincroniza el mismo filtro entre Dashboard y Estadísticas
+function syncSelects(cls, val){
+  document.querySelectorAll('#gfDash .'+cls+', #gfStats .'+cls).forEach(s => { s.value = val; });
 }
 
 function refreshAll(){
@@ -839,14 +869,16 @@ function updateFilterCounts(){
 function renderKPIs(){
   const total = filtered.length;
   let si=0, no=0, na=0;
-  filtered.forEach(r => { si += r.totalSi; no += r.totalNo; na += r.totalNa; });
+  filtered.forEach(r => { const t=getTotalsForRecord(r); si += t.si; no += t.no; na += t.na; });
   const cmp = si+no === 0 ? 0 : Math.round((si/(si+no))*100);
+  const pSel = gState.principio ? PRINCIPIOS.find(p=>p.id===parseInt(gState.principio)) : null;
+  const sub = pSel ? ('principio: ' + pSel.id + '. ' + pSel.n) : 'promedio general';
   $('kpiGrid').innerHTML = `
-    ${kpiCard('total','Total registros',total,'rondas realizadas','<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>')}
+    ${kpiCard('total','Total registros',total,pSel?'rondas con este principio':'rondas realizadas','<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>')}
     ${kpiCard('si','Respuestas SI',si,'cumplimiento','<polyline points="20 6 9 17 4 12"/>')}
     ${kpiCard('no','Respuestas NO',no,'no cumplimiento','<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>')}
     ${kpiCard('na','Respuestas N/A',na,'no aplica','<circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/>')}
-    ${kpiCard('cmp','Cumplimiento global',cmp+'%','promedio general','<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>')}
+    ${kpiCard('cmp','Cumplimiento',cmp+'%',sub,'<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>')}
   `;
 }
 function kpiCard(c,label,val,sub,iconPath){
@@ -860,7 +892,7 @@ function destroyChart(id){ if (charts[id]) { charts[id].destroy(); delete charts
 
 function renderDashboardCharts(){
   let si=0,no=0,na=0;
-  filtered.forEach(r => { si+=r.totalSi; no+=r.totalNo; na+=r.totalNa; });
+  filtered.forEach(r => { const t=getTotalsForRecord(r); si+=t.si; no+=t.no; na+=t.na; });
   destroyChart('chDist');
   charts.chDist = new Chart($('chDist'),{
     type:'doughnut',
@@ -869,7 +901,7 @@ function renderDashboardCharts(){
   });
 
   const byS = {};
-  filtered.forEach(r => { if (!byS[r.servicio]) byS[r.servicio]={si:0,no:0}; byS[r.servicio].si+=r.totalSi; byS[r.servicio].no+=r.totalNo; });
+  filtered.forEach(r => { if (!byS[r.servicio]) byS[r.servicio]={si:0,no:0}; const t=getTotalsForRecord(r); byS[r.servicio].si+=t.si; byS[r.servicio].no+=t.no; });
   const srvNames = Object.keys(byS).sort((a,b)=>{
     const ca = byS[a].si+byS[a].no===0?0:byS[a].si/(byS[a].si+byS[a].no);
     const cb = byS[b].si+byS[b].no===0?0:byS[b].si/(byS[b].si+byS[b].no);
@@ -899,8 +931,13 @@ function renderDashboardCharts(){
 // ════════════════════════════════════════════════════
 function renderStatsCharts(){
   const sFiltered = registros.filter(r => matchesG(r, gState));
+  const principiosFiltrados = gState.principio
+    ? PRINCIPIOS.filter(p => p.id === parseInt(gState.principio))
+    : PRINCIPIOS;
+  const qStart = principiosFiltrados[0] ? principiosFiltrados[0].range[0] : 1;
+  const qEnd = principiosFiltrados[principiosFiltrados.length-1] ? principiosFiltrados[principiosFiltrados.length-1].range[1] : 20;
 
-  const datosPrin = PRINCIPIOS.map(p => {
+  const datosPrin = principiosFiltrados.map(p => {
     let s=0,n=0,a=0;
     sFiltered.forEach(r => {
       for (let q=p.range[0]; q<=p.range[1]; q++){
@@ -922,7 +959,7 @@ function renderStatsCharts(){
   });
 
   const qStats = [];
-  for (let q=1; q<=20; q++){
+  for (let q=qStart; q<=qEnd; q++){
     let s=0,n=0,a=0;
     sFiltered.forEach(r => {
       const resp = (r.respuestas[q-1]||{}).respuesta;
@@ -942,7 +979,7 @@ function renderStatsCharts(){
   });
 
   const byS = {};
-  sFiltered.forEach(r => { if (!byS[r.servicio]) byS[r.servicio]={si:0,no:0}; byS[r.servicio].si+=r.totalSi; byS[r.servicio].no+=r.totalNo; });
+  sFiltered.forEach(r => { if (!byS[r.servicio]) byS[r.servicio]={si:0,no:0}; const t=getTotalsForRecord(r); byS[r.servicio].si+=t.si; byS[r.servicio].no+=t.no; });
   const ranked = Object.keys(byS).map(s => { const d=byS[s]; return {s, pct:d.si+d.no===0?0:Math.round((d.si/(d.si+d.no))*100)}; }).sort((a,b)=>b.pct-a.pct);
   const top = ranked.slice(0,5);
   const bot = ranked.slice(-5).reverse();
